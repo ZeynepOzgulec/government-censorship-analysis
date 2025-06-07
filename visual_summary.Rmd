@@ -1,0 +1,239 @@
+
+---
+title: "Scenario Visualization: Government Takedown Requests"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(MASS)
+library(ggplot2)
+library(dplyr)
+library(mvtnorm)
+
+# Create figures folder if it doesn't exist
+if (!dir.exists("figures")) dir.create("figures")
+
+```
+
+```{r load-data}
+load("data/analysis_data.RData")
+load("models/m6_model.RData")
+```
+
+## 🔢 Simulating Scenarios
+
+```{r simulate-scenarios}
+
+set.seed(1234)
+nsim <- 1000
+
+gamma_hat <- coef(m6)
+V_hat <- vcov(m6)
+S <- mvtnorm::rmvnorm(nsim, gamma_hat, V_hat)
+
+scenario_right <- c(1, mean(df$parliament_rw, na.rm=TRUE), 1, mean(df$gov_appr, na.rm=TRUE), mean(df$terrorism_index, na.rm=TRUE), mean(df$gdp, na.rm=TRUE))
+scenario_balanced <- c(1, mean(df$parliament_rw, na.rm=TRUE), 0, mean(df$gov_appr, na.rm=TRUE), mean(df$terrorism_index, na.rm=TRUE), mean(df$gdp, na.rm=TRUE))
+scenario_left <- c(1, mean(df$parliament_rw, na.rm=TRUE), -1, mean(df$gov_appr, na.rm=TRUE), mean(df$terrorism_index, na.rm=TRUE), mean(df$gdp, na.rm=TRUE))
+
+mu_right <- exp(scenario_right %*% t(S))
+mu_balanced <- exp(scenario_balanced %*% t(S))
+mu_left <- exp(scenario_left %*% t(S))
+
+mu_df <- data.frame(
+  value = c(mu_right, mu_balanced, mu_left),
+  scenario = rep(c("Right-wing", "Balanced", "Left-wing"), each = nsim)
+)
+```
+
+## 📈 Expected Values Plot
+
+```{r plot-expected-values}
+ggplot(mu_df, aes(x = scenario, y = value)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "Expected Removal Requests by Government Ideology",
+       y = "Expected Removal Requests",
+       x = "Government Composition") +
+  theme_minimal()
+
+# Export expected values boxplot
+png("figures/expected_values.png", width = 800, height = 600)
+ggplot(mu_df, aes(x = scenario, y = value)) +
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "Expected Removal Requests by Government Ideology",
+       y = "Expected Removal Requests",
+       x = "Government Composition") +
+  theme_minimal()
+dev.off()
+
+```
+
+## 📉 First Differences (Relative to Right-Wing Baseline)
+
+```{r plot-first-differences}
+first_diff_balanced <- mu_balanced - mu_right
+first_diff_left <- mu_left - mu_right
+
+diff_df <- data.frame(
+  diff = c(first_diff_balanced, first_diff_left),
+  group = rep(c("Balanced - Right", "Left - Right"), each = nsim)
+)
+
+ggplot(diff_df, aes(x = group, y = diff)) +
+  geom_boxplot(fill = "steelblue") +
+  labs(title = "First Differences: Effect of Government Composition",
+       y = "Difference in Expected Requests",
+       x = "") +
+  theme_minimal()
+
+# Export first differences boxplot
+png("figures/first_differences.png", width = 800, height = 600)
+ggplot(diff_df, aes(x = group, y = diff)) +
+  geom_boxplot(fill = "steelblue") +
+  labs(title = "First Differences: Effect of Government Composition",
+       y = "Difference in Expected Requests",
+       x = "") +
+  theme_minimal()
+dev.off()
+
+```
+
+## 🎨 Base R Plot: First Differences with CIs
+
+```{r base-plot}
+# Compute confidence intervals
+cis <- apply(rbind(first_diff_balanced, first_diff_left), 1, quantile, probs = c(0.025, 0.975))
+cis <- t(cis)
+col <- "steelblue"
+
+# Compute medians
+median_fd_right_centre <- median(first_diff_balanced)
+median_fd_right_left <- median(first_diff_left)
+
+par(family = "serif", mar = c(5, 1, 4, 7) + .1)
+
+plot(
+  y <- c(2:1),
+  x <- c(median_fd_right_centre, median_fd_right_left),
+  cex = 1.5,
+  xlab = 'First Differences and %95 CIs of Expected Removal Request',
+  col = col,
+  ylab = '',
+  yaxt = "n",
+  xlim = c(-10, 25),
+  ylim = c(0.5 , 4.5),
+  pch = 19,
+  main = 'First Differences of Expected Removal Requests for Different Cabinet Compositions\n(Baseline: Dominantly right-centre)',
+  bty = "n"
+)
+
+axis(
+  4,
+  at = c(2:1),
+  labels = c("Balanced", "Dominantly  social democrat/left"),
+  las = 2,
+  cex.axis = 0.8
+)
+
+segments(
+  x0 = c(cis[1:2, 1]),
+  y0 = c(2:1),
+  x1 = c(cis[1:2, 2]),
+  y1 = c(2:1),
+  col = "blue",
+  lwd = 2.3
+)
+
+segments(
+  x0 = 0,
+  y0 = 0,
+  x1 = 0,
+  y1 = 5,
+  lty = "dashed"
+)
+
+# Save results table
+results <- as.data.frame(cbind(y, c(median_fd_right_centre, median_fd_right_left), cis))
+colnames(results) <- c("scenario_id", "median", "lower", "upper")
+
+# Export first differences boxplot
+png("figures/first_differences.png", width = 800, height = 600)
+ggplot(diff_df, aes(x = group, y = diff)) +
+  geom_boxplot(fill = "steelblue") +
+  labs(title = "First Differences: Effect of Government Composition",
+       y = "Difference in Expected Requests",
+       x = "") +
+  theme_minimal()
+dev.off()
+
+```
+
+
+
+## 🌊 Density Ridge Plot: Expected Removal Requests
+
+```{r ridge-plot}
+# Create a data frame for ridge plot
+df <- data.frame(
+  exp_values = c(mu_right, mu_balanced, mu_left),
+  id = rep(c("Right-wing", "Balanced", "Left-wing"), each = nsim)
+)
+
+ggplot(df, aes(x = exp_values, y = id, fill = id)) +
+  ggridges::geom_density_ridges(alpha = 0.7) +
+  xlab("Expected Removal Requests") +
+  ylab("") +
+  scale_fill_manual(values = c("darkblue", "blue", "lightblue")) +
+  coord_cartesian(clip = "off") +
+  scale_y_discrete(expand = c(0, 0)) +
+  ggridges::theme_ridges(grid = FALSE, center_axis_labels = TRUE) +
+  theme(
+    legend.position = "none",
+    plot.title.position = "plot",
+    axis.text = element_text(family = "serif"),
+    axis.title = element_text(family = "serif"),
+    plot.title = element_text(family = "serif"),
+    plot.subtitle = element_text(family = "serif"),
+    plot.caption = element_text(family = "serif")
+  ) +
+  labs(
+    x = "Expected Removal Requests",
+    y = "",
+    title = "Expected Removal Requests for Different Cabinet Compositions",
+    subtitle = "",
+    caption = ""
+  )
+
+# Create ridge plot and save
+df <- data.frame(
+  exp_values = c(mu_right, mu_balanced, mu_left),
+  id = rep(c("Right-wing", "Balanced", "Left-wing"), each = nsim)
+)
+
+png("figures/ridge_plot.png", width = 800, height = 600)
+ggplot(df, aes(x = exp_values, y = id, fill = id)) +
+  ggridges::geom_density_ridges(alpha = 0.7) +
+  xlab("Expected Removal Requests") +
+  ylab("") +
+  scale_fill_manual(values = c("darkblue", "blue", "lightblue")) +
+  coord_cartesian(clip = "off") +
+  scale_y_discrete(expand = c(0, 0)) +
+  ggridges::theme_ridges(grid = FALSE, center_axis_labels = TRUE) +
+  theme(
+    legend.position = "none",
+    plot.title.position = "plot",
+    axis.text = element_text(family = "serif"),
+    axis.title = element_text(family = "serif"),
+    plot.title = element_text(family = "serif"),
+    plot.subtitle = element_text(family = "serif"),
+    plot.caption = element_text(family = "serif")
+  ) +
+  labs(
+    x = "Expected Removal Requests",
+    y = "",
+    title = "Expected Removal Requests for Different Cabinet Compositions",
+    subtitle = "",
+    caption = ""
+  )
+dev.off()
+
+```

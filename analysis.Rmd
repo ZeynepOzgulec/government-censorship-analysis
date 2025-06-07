@@ -1,0 +1,115 @@
+
+---
+title: "Government Censorship Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Load required packages
+p_needed <- c("viridis", "stargazer", "dplyr", "optimx", "MASS", "separationplot", "haven", "dagitty", "scales", "readxl", "mvtnorm")
+packages <- rownames(installed.packages())
+p_to_install <- p_needed[!(p_needed %in% packages)]
+if (length(p_to_install) > 0) {
+  install.packages(p_to_install)
+}
+sapply(p_needed, require, character.only = TRUE)
+```
+
+## 📂 Data Loading & Preparation
+
+```{r load-data}
+# Load dataset (replace with your local path if needed)
+raw_data <- readxl::read_excel("data/censorship_data.xlsx")
+df <- as.data.frame(raw_data)
+
+
+# Convert relevant columns to numeric
+df$cabinet_rl <- as.numeric(df$cabinet_rl)
+df$parliament_rw <- as.numeric(df$parliament_rw)
+df$gov_appr <- as.numeric(df$gov_appr)
+df$terrorism_index <- as.numeric(df$terrorism_index)
+df$gdp <- log(df$`GDP per Capita`)
+```
+
+## 📊 Modeling: Ideology Effects on Takedown Requests
+
+### Model 1: Base model with ideology variables
+
+```{r model-1}
+m1 <- glm(dlt_req ~ cabinet_rl + parliament_rw, data = na.omit(df), family = "poisson")
+summary(m1)
+
+m2 <- glm.nb(dlt_req ~ cabinet_rl + parliament_rw, data = na.omit(df), control = glm.control(maxit = 100))
+summary(m2)
+
+# Likelihood Ratio Test for model comparison
+L1 <- logLik(m1)
+L2 <- logLik(m2)
+LRT <- -2 * L1 + 2 * L2
+LRT > qchisq(0.95, df = 1)
+```
+
+### Model 2: Add Government Approval Rate
+
+```{r model-2}
+m3 <- glm(dlt_req ~ cabinet_rl + parliament_rw + gov_appr, data = na.omit(df), family = "poisson")
+summary(m3)
+
+m4 <- glm.nb(dlt_req ~ cabinet_rl + parliament_rw + gov_appr, data = na.omit(df), control = glm.control(maxit = 100))
+summary(m4)
+```
+
+### Model 3: Full Model with Controls
+
+```{r model-3}
+m5 <- glm(dlt_req ~ parliament_rw + cabinet_rl + gov_appr + terrorism_index + gdp, data = na.omit(df), family = "poisson")
+summary(m5)
+
+m6 <- glm.nb(dlt_req ~ parliament_rw + cabinet_rl + gov_appr + terrorism_index + gdp, data = na.omit(df), control = glm.control(maxit = 100))
+summary(m6)
+```
+
+## 📋 Regression Summary Table
+
+```{r regression-table, results='asis'}
+stargazer(m2, m4, m6,
+          title = "Regression Table for Models",
+          dep.var.caption = c("Dependent Variable: Removal Requests"),
+          dep.var.labels = "",
+          column.labels = c("Model 1", "Model 2", "Model 3"),
+          covariate.labels = c("Government ideology (right-left)", 
+                               "Right-wing seat share in the parliament", 
+                               "Approval rate of the government", 
+                               "Terrorism scale", 
+                               "GDP per capita", 
+                               "Constant"))
+```
+
+## 📈 Scenario Simulation (Interpretation)
+
+```{r simulation}
+set.seed(1234)
+
+# Simulation from the final model
+nsim <- 1000
+gamma_hat <- coef(m6)
+V_hat <- vcov(m6)
+S <- mvtnorm::rmvnorm(nsim, gamma_hat, V_hat)
+
+# Example Scenario: Right-wing government
+scenario1 <- cbind(
+  1,
+  mean(df$parliament_rw, na.rm = TRUE),
+  1,
+  mean(df$gov_appr, na.rm = TRUE),
+  mean(df$terrorism_index, na.rm = TRUE),
+  mean(df$gdp, na.rm = TRUE)
+)
+
+# Predicted counts for scenario
+predicted_counts <- exp(scenario1 %*% t(S))
+summary(predicted_counts)
+```
+
+## 🧠 Notes
+- This analysis is part of a broader project. All data work, modeling, and interpretation here were done independently.
